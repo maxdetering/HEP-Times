@@ -10,12 +10,12 @@ from datetime import datetime
 # Page 5: gr-qc
 # Page 6: astro-ph
 PAGE_MAPPING = {
-    1: {'name': 'Front Page', 'query': 'cat:hep-ph OR cat:hep-th', 'limit': 10},
-    2: {'name': 'Phenomenology (hep-ph)', 'query': 'cat:hep-ph', 'limit': 20},
-    3: {'name': 'Theory (hep-th)', 'query': 'cat:hep-th', 'limit': 20},
-    4: {'name': 'Lattice (hep-lat)', 'query': 'cat:hep-lat', 'limit': 20},
-    5: {'name': 'GR & QC (gr-qc)', 'query': 'cat:gr-qc', 'limit': 20},
-    6: {'name': 'Astrophysics (astro-ph)', 'query': 'cat:astro-ph', 'limit': 20},
+    1: {'name': 'Front Page', 'query': 'cat:hep-ph OR cat:hep-th', 'limit': 10, 'filter': None},
+    2: {'name': 'Phenomenology (hep-ph)', 'query': 'cat:hep-ph', 'limit': 20, 'filter': 'hep-ph'},
+    3: {'name': 'Theory (hep-th)', 'query': 'cat:hep-th', 'limit': 20, 'filter': 'hep-th'},
+    4: {'name': 'Lattice (hep-lat)', 'query': 'cat:hep-lat', 'limit': 20, 'filter': 'hep-lat'},
+    5: {'name': 'GR & QC (gr-qc)', 'query': 'cat:gr-qc', 'limit': 20, 'filter': 'gr-qc'},
+    6: {'name': 'Astrophysics (astro-ph)', 'query': 'cat:astro-ph', 'limit': 20, 'filter': 'astro-ph'},
 }
 
 def index(request, page_num=1):
@@ -26,7 +26,11 @@ def index(request, page_num=1):
     page_config = PAGE_MAPPING[page_num]
     
     # Fetch papers
-    papers = fetch_arxiv_papers(query=page_config['query'], max_results=page_config['limit'])
+    papers = fetch_arxiv_papers(
+        query=page_config['query'], 
+        max_results=page_config['limit'],
+        primary_category_filter=page_config.get('filter')
+    )
     
     headline_paper = None
     other_papers = []

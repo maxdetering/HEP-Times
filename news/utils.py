@@ -42,15 +42,21 @@ def clean_latex_text(text):
             
     return "".join(cleaned_parts)
 
-def fetch_arxiv_papers(query="cat:hep-ph OR cat:hep-th", max_results=10):
+def fetch_arxiv_papers(query="cat:hep-ph OR cat:hep-th", max_results=10, primary_category_filter=None):
     """
     Generic fetcher for ArXiv papers.
-    sorted by submission date descending.
+    Fetches a larger batch to identify the latest daily release, 
+    then sorts that specific batch by submission time ascending (closets to deadline first).
+    If primary_category_filter is provided, filters papers to match that category.
     """
+    # We fetch significantly more papers than requested to ensure we find the start of the daily batch.
+    # Daily volume for major cats is ~50. 100 is a safe margin.
+    fetch_limit = max(100, max_results * 5) 
+    
     params = {
         'search_query': query,
         'start': 0,
-        'max_results': max_results,
+        'max_results': fetch_limit,
         'sortBy': 'submittedDate',
         'sortOrder': 'descending',
     }
@@ -79,6 +85,8 @@ def fetch_arxiv_papers(query="cat:hep-ph OR cat:hep-th", max_results=10):
             print(f"Feedparser exception: {feed.bozo_exception}")
     
     papers = []
+    
+    # Process entries into a structured list first
     for entry in feed.entries:
         try:
             # Extract authors
@@ -121,9 +129,51 @@ def fetch_arxiv_papers(query="cat:hep-ph OR cat:hep-th", max_results=10):
         except Exception as e:
             print(f"Error parsing entry: {e}")
             continue
-        
-    print(f"Successfully fetched {len(papers)} papers for query: {query}")
-    return papers
+
+    if not papers:
+        return []
+
+    # Filter for only the "latest batch".
+    # ArXiv releases happen once a day. 
+    # The fetched list (descending) contains today's papers, then yesterday's, etc.
+    # We want to identify the latest group and cut off the rest.
+    # Strategy: Sort descending (already is, mostly), find the largest time gap to identify batch boundary?
+    # Or just group by "ArXiv Day" (Deadline is 14:00 ET / 19:00 UTC).
+    
+    # Let's use the simplest heuristic: Sort by published descending.
+    # The latest papers are at the top.
+    # We iterate and stop when we hit a gap > 4 hours (arbitrary, but submissions usually slow down or stop at cutoff?).
+    # Actually, submission is continuous. The "Published" date is what matters.
+    # But ArXiv API "published" is the submission time...
+    
+    # Actually, ArXiv API returns results sorted by submission time.
+    # We want the *latest* contiguous block of papers roughly from the last 24h.
+    # Let's find the most recent paper's date.
+    papers.sort(key=lambda x: x['published'], reverse=True) # Ensure strictly descending
+    latest_ts = papers[0]['published']
+    
+    # Filter papers within 24 hours of the latest paper
+    # (Assuming papers are released daily, the "new" batch spans 24h ending at the latest submission)
+    cutoff_time = latest_ts.timestamp() - (24 * 3600)
+    
+    latest_batch = [p for p in papers if p['published'].timestamp() > cutoff_time]
+    
+    # Filter by primary category if requested
+    if primary_category_filter:
+        # Check if the primary category starts with the filter (e.g., 'astro-ph' matches 'astro-ph.CO')
+        latest_batch = [
+            p for p in latest_batch 
+            if p['primary_category'].startswith(primary_category_filter)
+        ]
+    
+    # Now sort THIS batch ascending (Earliest submission first -> "Increasing time after deadline")
+    latest_batch.sort(key=lambda x: x['published'])
+    
+    # Slice the requested amount
+    result = latest_batch[:max_results]
+    
+    print(f"Fetched {len(papers)} raw, found {len(latest_batch)} in latest 24h batch matching filter. Returning {len(result)}.")
+    return result
 
 def fetch_latest_papers():
     # Backwards compatibility default
