@@ -1,0 +1,141 @@
+:root {
+    --paper-bg: #fdfbf7;
+    --ink-color: #2f2f2f;
+    --accent-color: #8b0000; /* Dark red for some accents */
+}
+
+body {
+    font-family: 'Times New Roman', Times, serif;
+    background-color: var(--paper-bg);
+    color: var(--ink-color);
+    margin: 0;
+    padding: 20px;
+    line-height: 1.6;
+}
+
+.container {
+    max-width: 1200px;
+    margin: 0 auto;
+    padding: 20px;
+    background-color: #fff; /* Slightly lighter than bg for the paper itself */
+    box-shadow: 0 0 15px rgba(0,0,0,0.1);
+}
+
+header {
+    text-align: center;
+    border-bottom: 3px double var(--ink-color);
+    margin-bottom: 30px;
+    padding-bottom: 20px;
+}
+
+.title {
+    font-family: 'Playfair Display', serif; /* Need to import this */
+    font-size: 4rem;
+    margin: 0;
+    text-transform: uppercase;
+    letter-spacing: 2px;
+}
+
+.meta-header {
+    display: flex;
+    justify-content: space-between;
+    border-top: 1px solid var(--ink-color);
+    border-bottom: 1px solid var(--ink-color);
+    padding: 5px 0;
+    margin-top: 10px;
+    font-style: italic;
+    font-size: 0.9rem;
+}
+
+.headline-section {
+    margin-bottom: 40px;
+    padding-bottom: 20px;
+    border-bottom: 1px solid var(--ink-color);
+    text-align: center;
+}
+
+.headline-title {
+    font-size: 2.5rem;
+    font-weight: bold;
+    margin: 10px 0;
+}
+
+.headline-meta {
+    font-style: italic;
+    color: #666;
+    margin-bottom: 15px;
+}
+
+.headline-abstract {
+    font-size: 1.1rem;
+    text-align: justify;
+    max-width: 800px;
+    margin: 0 auto;
+    columns: 2; /* Newspaper style multi-column for the main text */
+    column-gap: 40px;
+}
+
+.grid-container {
+    display: grid;
+    grid-template-columns: repeat(auto-fill, minmax(300px, 1fr));
+    gap: 30px;
+}
+
+.paper-card {
+    border-right: 1px solid #ddd;
+    padding-right: 20px;
+}
+
+.paper-card:last-child {
+    border-right: none;
+}
+
+.paper-title {
+    font-size: 1.2rem;
+    font-weight: bold;
+    margin-top: 0;
+}
+
+.paper-authors {
+    font-size: 0.85rem;
+    font-style: italic;
+    color: #555;
+    margin-bottom: 10px;
+}
+
+.paper-abstract {
+    font-size: 0.9rem;
+    text-align: justify;
+}
+
+.read-more {
+    display: inline-block;
+    margin-top: 10px;
+    text-decoration: none;
+    color: var(--accent-color);
+    font-weight: bold;
+    border: 1px solid var(--accent-color);
+    padding: 5px 10px;
+    transition: all 0.2s;
+}
+
+.read-more:hover {
+    background-color: var(--accent-color);
+    color: white;
+}
+
+.category-tag {
+    background-color: var(--ink-color);
+    color: white;
+    padding: 2px 5px;
+    font-size: 0.7rem;
+    text-transform: uppercase;
+}
+
+footer {
+    margin-top: 50px;
+    text-align: center;
+    border-top: 3px double var(--ink-color);
+    padding-top: 20px;
+    font-size: 0.8rem;
+}
