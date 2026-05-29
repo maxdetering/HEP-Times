@@ -1,0 +1,15 @@
+name: Daily ArXiv Build
+
+on:
+  schedule:
+    # 20:30 UTC daily — 90 minutes after ArXiv's 19:00 UTC paper release
+    - cron: '30 20 * * *'
+  workflow_dispatch: # allow manual trigger from GitHub UI
+
+jobs:
+  trigger-netlify-build:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Trigger Netlify build hook
+        run: |
+          curl -s -X POST "${{ secrets.NETLIFY_BUILD_HOOK_URL }}"

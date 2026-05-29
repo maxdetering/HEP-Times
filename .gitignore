@@ -14,4 +14,3 @@ staticfiles
 .env
 .DS_Store
 .vscode/
-.github/
