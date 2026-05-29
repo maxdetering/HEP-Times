@@ -1,3 +1,6 @@
+# Build output
+dist/
+
 # Django
 *.log
 *.pot

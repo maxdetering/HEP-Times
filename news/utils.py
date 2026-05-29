@@ -1,11 +1,18 @@
 import requests
 import feedparser
+import time
 from datetime import datetime
 from dateutil import parser
 import urllib.parse
 import re
 
-ARXIV_API_URL = 'http://export.arxiv.org/api/query'
+ARXIV_API_URL = 'https://export.arxiv.org/api/query'
+
+# Simple in-memory cache: key -> (timestamp, data)
+_cache = {}
+_CACHE_TTL = 2 * 3600  # 2 hours — ArXiv updates once a day
+_MIN_REQUEST_INTERVAL = 3  # seconds between ArXiv requests, per their guidelines
+_last_request_time = 0
 
 def clean_latex_text(text):
     """
@@ -45,14 +52,29 @@ def clean_latex_text(text):
 def fetch_arxiv_papers(query="cat:hep-ph OR cat:hep-th", max_results=10, primary_category_filter=None):
     """
     Generic fetcher for ArXiv papers.
-    Fetches a larger batch to identify the latest daily release, 
-    then sorts that specific batch by submission time ascending (closets to deadline first).
-    If primary_category_filter is provided, filters papers to match that category.
+    Fetches a larger batch to identify the latest daily release,
+    then sorts that specific batch by submission time ascending (closest to deadline first).
+    Results are cached for 2 hours to avoid hitting ArXiv rate limits.
     """
-    # We fetch significantly more papers than requested to ensure we find the start of the daily batch.
-    # Daily volume for major cats is ~50. 100 is a safe margin.
-    fetch_limit = max(100, max_results * 5) 
-    
+    global _last_request_time
+
+    cache_key = f"{query}|{max_results}|{primary_category_filter}"
+    now = time.time()
+
+    if cache_key in _cache:
+        cached_at, cached_data = _cache[cache_key]
+        if now - cached_at < _CACHE_TTL:
+            print(f"Cache hit for '{cache_key}'. Returning cached result.")
+            return cached_data
+
+    # Respect ArXiv's guideline: no more than 1 request per 3 seconds
+    elapsed = now - _last_request_time
+    if elapsed < _MIN_REQUEST_INTERVAL:
+        time.sleep(_MIN_REQUEST_INTERVAL - elapsed)
+
+    # Fetch enough to cover a full day's batch. 150 covers all categories comfortably.
+    fetch_limit = max(150, max_results * 5)
+
     params = {
         'search_query': query,
         'start': 0,
@@ -60,21 +82,33 @@ def fetch_arxiv_papers(query="cat:hep-ph OR cat:hep-th", max_results=10, primary
         'sortBy': 'submittedDate',
         'sortOrder': 'descending',
     }
-    
+
     query_string = urllib.parse.urlencode(params)
     url = f"{ARXIV_API_URL}?{query_string}"
-    
+
     headers = {
-        'User-Agent': 'HEP-Times/1.0 (Educational Project; mailto:student@example.com)'
+        'User-Agent': 'HEP-Times/1.0 (Educational Project; mailto:max@detering.de)'
     }
-    
-    try:
-        response = requests.get(url, headers=headers, timeout=10)
-        if response.status_code != 200:
-            print(f"Error: ArXiv API returned status code {response.status_code}")
+
+    # Retry with exponential backoff on 429 (rate limit) responses.
+    for attempt in range(5):
+        try:
+            response = requests.get(url, headers=headers, timeout=30)
+            _last_request_time = time.time()
+            if response.status_code == 429:
+                wait = 30 * (2 ** attempt)
+                print(f"Rate limited by ArXiv (attempt {attempt+1}). Waiting {wait}s...")
+                time.sleep(wait)
+                continue
+            if response.status_code != 200:
+                print(f"Error: ArXiv API returned status code {response.status_code}")
+                return []
+            break
+        except requests.RequestException as e:
+            print(f"Network error fetching from ArXiv: {e}")
             return []
-    except requests.RequestException as e:
-        print(f"Network error fetching from ArXiv: {e}")
+    else:
+        print("Exceeded retry limit after repeated 429 responses.")
         return []
 
     feed = feedparser.parse(response.content)
@@ -158,12 +192,13 @@ def fetch_arxiv_papers(query="cat:hep-ph OR cat:hep-th", max_results=10, primary
     
     latest_batch = [p for p in papers if p['published'].timestamp() > cutoff_time]
     
-    # Filter by primary category if requested
+    # Filter by primary category if requested.
+    # Accepts a single string or a list of strings (any match passes).
     if primary_category_filter:
-        # Check if the primary category starts with the filter (e.g., 'astro-ph' matches 'astro-ph.CO')
+        filters = [primary_category_filter] if isinstance(primary_category_filter, str) else primary_category_filter
         latest_batch = [
-            p for p in latest_batch 
-            if p['primary_category'].startswith(primary_category_filter)
+            p for p in latest_batch
+            if any(p['primary_category'].startswith(f) for f in filters)
         ]
     
     # Now sort THIS batch ascending (Earliest submission first -> "Increasing time after deadline")
@@ -173,9 +208,9 @@ def fetch_arxiv_papers(query="cat:hep-ph OR cat:hep-th", max_results=10, primary
     result = latest_batch[:max_results]
     
     print(f"Fetched {len(papers)} raw, found {len(latest_batch)} in latest 24h batch matching filter. Returning {len(result)}.")
+
+    _cache[cache_key] = (time.time(), result)
     return result
 
 def fetch_latest_papers():
-    # Backwards compatibility default
     return fetch_arxiv_papers(query='cat:hep-ph OR cat:hep-th', max_results=10)
-    return papers
