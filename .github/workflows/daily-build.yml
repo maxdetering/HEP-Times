@@ -2,8 +2,8 @@ name: Daily ArXiv Build
 
 on:
   schedule:
-    # 20:30 UTC daily — 90 minutes after ArXiv's 19:00 UTC paper release
-    - cron: '30 20 * * *'
+    # 02:00 UTC Mon-Fri — 60 minutes after ArXiv's 01:00 UTC paper release
+    - cron: '0 2 * * 1-5'
   workflow_dispatch: # allow manual trigger from GitHub UI
 
 jobs:
