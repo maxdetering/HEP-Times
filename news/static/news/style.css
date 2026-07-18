@@ -139,3 +139,50 @@ footer {
     padding-top: 20px;
     font-size: 0.8rem;
 }
+
+@media (max-width: 768px) {
+    body {
+        padding: 10px;
+    }
+
+    .container {
+        padding: 12px;
+    }
+
+    .title {
+        font-size: 2.2rem;
+        letter-spacing: 1px;
+    }
+
+    .meta-header {
+        flex-direction: column;
+        gap: 4px;
+        text-align: center;
+        font-size: 0.8rem;
+    }
+
+    .headline-title {
+        font-size: 1.6rem;
+    }
+
+    .headline-abstract {
+        columns: 1;
+        font-size: 1rem;
+    }
+
+    .grid-container {
+        grid-template-columns: 1fr;
+        gap: 20px;
+    }
+
+    .paper-card {
+        border-right: none;
+        padding-right: 0;
+        padding-bottom: 20px;
+        border-bottom: 1px solid #ddd;
+    }
+
+    .paper-card:last-child {
+        border-bottom: none;
+    }
+}
