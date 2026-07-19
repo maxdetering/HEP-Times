@@ -1,7 +1,0 @@
-[build]
-  command = "pip install -r requirements.txt && python build.py"
-  publish = "dist"
-
-[build.environment]
-  DJANGO_SETTINGS_MODULE = "hep_times.settings"
-  PYTHON_VERSION = "3.9"

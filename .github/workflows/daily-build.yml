@@ -6,10 +6,47 @@ on:
     - cron: '0 2 * * 1-5'
   workflow_dispatch: # allow manual trigger from GitHub UI
 
+permissions:
+  contents: read
+  pages: write
+  id-token: write
+
+# Only one Pages deployment at a time; let an in-flight run finish rather
+# than cancel it (a cancelled build would leave a half-updated site).
+concurrency:
+  group: "pages"
+  cancel-in-progress: false
+
 jobs:
-  trigger-netlify-build:
+  build:
     runs-on: ubuntu-latest
     steps:
-      - name: Trigger Netlify build hook
-        run: |
-          curl -s -X POST "${{ secrets.NETLIFY_BUILD_HOOK_URL }}"
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.9'
+
+      - name: Install dependencies
+        run: pip install -r requirements.txt
+
+      - name: Build static site
+        env:
+          DJANGO_SETTINGS_MODULE: hep_times.settings
+        run: python build.py
+
+      - name: Upload Pages artifact
+        uses: actions/upload-pages-artifact@v3
+        with:
+          path: dist
+
+  deploy:
+    needs: build
+    runs-on: ubuntu-latest
+    environment:
+      name: github-pages
+      url: ${{ steps.deployment.outputs.page_url }}
+    steps:
+      - name: Deploy to GitHub Pages
+        id: deployment
+        uses: actions/deploy-pages@v4
