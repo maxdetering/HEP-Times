@@ -10,7 +10,7 @@ from datetime import datetime
 # Page 5: gr-qc
 # Page 6: astro-ph
 PAGE_MAPPING = {
-    1: {'name': 'Front Page', 'query': 'cat:hep-ph OR cat:hep-th', 'limit': 10, 'filter': None},
+    1: {'name': 'Front Page', 'query': 'cat:hep-ph OR cat:hep-th', 'limit': 10, 'filter': ['hep-ph', 'hep-th']},
     2: {'name': 'Phenomenology (hep-ph)', 'query': 'cat:hep-ph', 'limit': 20, 'filter': 'hep-ph'},
     3: {'name': 'Theory (hep-th)', 'query': 'cat:hep-th', 'limit': 20, 'filter': 'hep-th'},
     4: {'name': 'Lattice (hep-lat)', 'query': 'cat:hep-lat', 'limit': 20, 'filter': 'hep-lat'},

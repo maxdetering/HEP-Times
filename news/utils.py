@@ -1,4 +1,3 @@
-import hashlib
 import threading
 import time
 import requests
@@ -8,20 +7,23 @@ from dateutil import parser
 import urllib.parse
 import re
 
-from django.core.cache import cache
-
-ARXIV_API_URL = 'http://export.arxiv.org/api/query'
+ARXIV_API_URL = 'https://export.arxiv.org/api/query'
 
 # The five primary-category families served by this site. Any paper whose
 # primary category doesn't fall under one of these is dropped, even if it
 # was returned because it's cross-listed into a requested category.
 ALLOWED_CATEGORIES = ('hep-ph', 'hep-th', 'hep-lat', 'gr-qc', 'astro-ph')
 
-CACHE_TTL_SECONDS = 15 * 60
-
 # arXiv asks API clients to space consecutive requests by at least 3 seconds.
+# The static build now makes a single combined request per run, so this
+# rarely triggers a wait; it's a safety net for any caller that fires
+# requests back-to-back without its own spacing (e.g. the live per-page view).
 MIN_REQUEST_INTERVAL = 3.0
-MAX_RETRIES = 2
+
+# Kept small and capped: a stuck build shouldn't eat into Netlify's/GitHub
+# Actions' build time budget. Better to fail fast and rerun than hang.
+MAX_RETRIES = 3
+RETRY_BACKOFF_SECONDS = (5, 10, 20)
 
 _last_request_lock = threading.Lock()
 _last_request_time = 0.0
@@ -65,13 +67,15 @@ def clean_latex_text(text):
 
 def _primary_category_allowed(primary_category, filter_prefix=None):
     """
-    Checks a paper's primary category against the requested filter, or
+    Checks a paper's primary category against the requested filter(s), or
     against the site-wide allowlist when no specific filter is given.
+    Accepts a single prefix string or a list of prefixes (any match passes).
     This is what keeps cross-listed papers (e.g. primary category hep-ex,
     cross-listed into hep-ph) out of pages that didn't ask for them.
     """
     if filter_prefix:
-        return primary_category.startswith(filter_prefix)
+        prefixes = [filter_prefix] if isinstance(filter_prefix, str) else filter_prefix
+        return any(primary_category.startswith(p) for p in prefixes)
     return any(primary_category.startswith(cat) for cat in ALLOWED_CATEGORIES)
 
 
@@ -83,7 +87,6 @@ def _throttled_get(url, headers, timeout):
     """
     global _last_request_time
 
-    backoff = 1.0
     response = None
 
     for attempt in range(MAX_RETRIES + 1):
@@ -98,16 +101,14 @@ def _throttled_get(url, headers, timeout):
         except requests.RequestException as e:
             if attempt < MAX_RETRIES:
                 print(f"Network error fetching from ArXiv (attempt {attempt + 1}): {e}")
-                time.sleep(backoff)
-                backoff *= 2
+                time.sleep(RETRY_BACKOFF_SECONDS[attempt])
                 continue
             raise
 
         if response.status_code == 429 or response.status_code >= 500:
             if attempt < MAX_RETRIES:
                 print(f"ArXiv returned status {response.status_code} (attempt {attempt + 1}), retrying")
-                time.sleep(backoff)
-                backoff *= 2
+                time.sleep(RETRY_BACKOFF_SECONDS[attempt])
                 continue
 
         return response
@@ -115,30 +116,14 @@ def _throttled_get(url, headers, timeout):
     return response
 
 
-def _cache_key(query, max_results, primary_category_filter):
-    raw = f"{query}|{max_results}|{primary_category_filter}"
-    digest = hashlib.md5(raw.encode('utf-8')).hexdigest()
-    return f"arxiv:papers:{digest}"
-
-
-def fetch_arxiv_papers(query="cat:hep-ph OR cat:hep-th", max_results=10, primary_category_filter=None):
+def _fetch_latest_batch(query, fetch_limit):
     """
-    Generic fetcher for ArXiv papers.
-    Fetches a modest multiple of the requested amount to identify the latest
-    daily release and to absorb cross-listed entries dropped by the category
-    allowlist, then sorts that batch by submission time ascending (closest to
-    deadline first). Results are cached briefly to avoid repeated arXiv calls
-    from normal page browsing.
+    Fetches up to fetch_limit entries for `query`, sorted by submission time,
+    and returns the "latest daily batch": entries within 24h of the most
+    recent submission in the fetched set, sorted descending (newest first).
+    Not filtered by category and not sliced to a page size — callers do that.
+    Returns [] on a failed request or an empty/unparseable feed.
     """
-    cache_key = _cache_key(query, max_results, primary_category_filter)
-    cached = cache.get(cache_key)
-    if cached is not None:
-        return cached
-
-    # Fetch a modest multiple of what's needed (not a flat minimum of 100)
-    # to leave room for the 24h "latest batch" cut and allowlist filtering.
-    fetch_limit = max_results * 3
-
     params = {
         'search_query': query,
         'start': 0,
@@ -151,7 +136,7 @@ def fetch_arxiv_papers(query="cat:hep-ph OR cat:hep-th", max_results=10, primary
     url = f"{ARXIV_API_URL}?{query_string}"
 
     headers = {
-        'User-Agent': 'HEP-Times/1.0 (Educational Project; mailto:student@example.com)'
+        'User-Agent': 'HEP-Times/1.0 (Educational Project; mailto:max@detering.de)'
     }
 
     try:
@@ -217,7 +202,6 @@ def fetch_arxiv_papers(query="cat:hep-ph OR cat:hep-th", max_results=10, primary
             continue
 
     if not papers:
-        cache.set(cache_key, [], CACHE_TTL_SECONDS)
         return []
 
     # Filter for only the "latest batch".
@@ -245,24 +229,87 @@ def fetch_arxiv_papers(query="cat:hep-ph OR cat:hep-th", max_results=10, primary
 
     latest_batch = [p for p in papers if p['published'].timestamp() > cutoff_time]
 
-    # Filter by category: honor an explicit filter if given, otherwise fall
-    # back to the site-wide allowlist so cross-listed papers whose primary
-    # category is outside our five families don't leak in.
+    print(f"Fetched {len(papers)} raw, found {len(latest_batch)} in latest 24h batch for query.")
+
+    return latest_batch
+
+
+def fetch_arxiv_papers(query="cat:hep-ph OR cat:hep-th", max_results=10, primary_category_filter=None):
+    """
+    Generic single-category fetcher for ArXiv papers. Used by the live,
+    per-request Django view (news/views.py), where each page is fetched on
+    demand for one query at a time.
+    """
+    # Fetch a modest multiple of what's needed (not a flat minimum of 150)
+    # to leave room for the 24h "latest batch" cut and allowlist filtering.
+    fetch_limit = max_results * 3
+
+    latest_batch = _fetch_latest_batch(query, fetch_limit)
+
+    # Filter by category: honor an explicit filter if given (string or list
+    # of prefixes), otherwise fall back to the site-wide allowlist so
+    # cross-listed papers whose primary category is outside our five
+    # families don't leak in.
     latest_batch = [
         p for p in latest_batch
         if _primary_category_allowed(p['primary_category'], primary_category_filter)
     ]
 
-    # Now sort THIS batch ascending (Earliest submission first -> "Increasing time after deadline")
+    # Sort ascending (earliest submission first -> "increasing time after deadline")
     latest_batch.sort(key=lambda x: x['published'])
 
-    # Slice the requested amount
     result = latest_batch[:max_results]
 
-    print(f"Fetched {len(papers)} raw, found {len(latest_batch)} in latest 24h batch matching filter. Returning {len(result)}.")
+    print(f"Filtered to {len(latest_batch)} matching, returning {len(result)}.")
 
-    cache.set(cache_key, result, CACHE_TTL_SECONDS)
     return result
+
+
+def fetch_and_partition_papers(page_configs):
+    """
+    Fetches ArXiv results for every page in one combined request instead of
+    one request per page, then partitions the shared pool by each page's
+    filter. Built for the static build (build.py), which always renders
+    every page in a single run, so there's no benefit to querying arXiv
+    once per page — a single combined request covers all of them.
+
+    page_configs: iterable of dicts, each with 'filter' (str, list of str,
+    or None) and 'limit' (int). Returns a list of paper lists, one per
+    page_config, in the same order.
+    """
+    filters = set()
+    for cfg in page_configs:
+        f = cfg.get('filter')
+        if f:
+            filters.update([f] if isinstance(f, str) else f)
+    if not filters:
+        filters = set(ALLOWED_CATEGORIES)
+
+    combined_query = ' OR '.join(f'cat:{c}' for c in sorted(filters))
+
+    # A single request now has to cover a full day's depth for every
+    # category at once, including high-volume ones like astro-ph, so this
+    # is sized well above the simple `limit * 3` used for a one-category
+    # call — a low-volume category like hep-lat would otherwise get
+    # crowded out of a small combined pool by higher-volume categories.
+    fetch_limit = 600
+
+    latest_batch = _fetch_latest_batch(combined_query, fetch_limit)
+
+    results = []
+    for cfg in page_configs:
+        matching = [
+            p for p in latest_batch
+            if _primary_category_allowed(p['primary_category'], cfg.get('filter'))
+        ]
+        matching.sort(key=lambda x: x['published'])
+        results.append(matching[:cfg['limit']])
+
+    total = sum(len(r) for r in results)
+    print(f"Combined fetch: {len(latest_batch)} in latest batch, partitioned into {total} papers across {len(page_configs)} pages.")
+
+    return results
+
 
 def fetch_latest_papers():
     # Backwards compatibility default

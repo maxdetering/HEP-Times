@@ -2,7 +2,6 @@ from datetime import datetime, timedelta, timezone
 from types import SimpleNamespace
 from unittest.mock import patch, MagicMock
 
-from django.core.cache import cache
 from django.test import TestCase
 
 from news import utils
@@ -34,7 +33,6 @@ def _make_entry(primary_category, published, entry_id="1234.5678"):
 
 class FetchArxivPapersTests(TestCase):
     def setUp(self):
-        cache.clear()
         # Avoid real sleeping for the inter-request throttle/backoff in tests.
         self.sleep_patcher = patch('news.utils.time.sleep')
         self.sleep_patcher.start()
@@ -102,7 +100,10 @@ class FetchArxivPapersTests(TestCase):
 
     @patch('news.utils.feedparser.parse')
     @patch('news.utils.requests.get')
-    def test_results_are_cached_between_calls(self, mock_get, mock_parse):
+    def test_no_in_process_caching_each_call_hits_arxiv(self, mock_get, mock_parse):
+        # fetch_arxiv_papers backs the live per-request Django view, which
+        # doesn't batch pages together — there's no cache layer here, so
+        # repeated calls (even for the same query) must each reach arXiv.
         now = datetime.now(timezone.utc)
         entries = [_make_entry('gr-qc', now, "1")]
         response, feed = self._mock_response(entries)
@@ -112,21 +113,29 @@ class FetchArxivPapersTests(TestCase):
         utils.fetch_arxiv_papers(query="cat:gr-qc", max_results=10, primary_category_filter='gr-qc')
         utils.fetch_arxiv_papers(query="cat:gr-qc", max_results=10, primary_category_filter='gr-qc')
 
-        self.assertEqual(mock_get.call_count, 1)
+        self.assertEqual(mock_get.call_count, 2)
 
     @patch('news.utils.feedparser.parse')
     @patch('news.utils.requests.get')
-    def test_different_queries_are_not_cached_together(self, mock_get, mock_parse):
+    def test_list_filter_matches_any_prefix(self, mock_get, mock_parse):
+        # The front page passes a list of prefixes (['hep-ph', 'hep-th'])
+        # rather than a single string.
         now = datetime.now(timezone.utc)
-        entries = [_make_entry('hep-lat', now, "1")]
+        entries = [
+            _make_entry('hep-ph', now, "1"),
+            _make_entry('hep-th', now - timedelta(hours=1), "2"),
+            _make_entry('gr-qc', now - timedelta(hours=2), "3"),
+        ]
         response, feed = self._mock_response(entries)
         mock_get.return_value = response
         mock_parse.return_value = feed
 
-        utils.fetch_arxiv_papers(query="cat:hep-lat", max_results=10, primary_category_filter='hep-lat')
-        utils.fetch_arxiv_papers(query="cat:astro-ph", max_results=10, primary_category_filter='astro-ph')
+        results = utils.fetch_arxiv_papers(
+            query="cat:hep-ph OR cat:hep-th", max_results=10, primary_category_filter=['hep-ph', 'hep-th']
+        )
 
-        self.assertEqual(mock_get.call_count, 2)
+        categories = {p['primary_category'] for p in results}
+        self.assertEqual(categories, {'hep-ph', 'hep-th'})
 
     @patch('news.utils.requests.get')
     def test_retries_on_rate_limit_then_succeeds(self, mock_get):
@@ -152,3 +161,81 @@ class FetchArxivPapersTests(TestCase):
 
         self.assertEqual(mock_get.call_count, utils.MAX_RETRIES + 1)
         self.assertEqual(result, [])
+
+
+class FetchAndPartitionPapersTests(TestCase):
+    def setUp(self):
+        self.sleep_patcher = patch('news.utils.time.sleep')
+        self.sleep_patcher.start()
+        self.addCleanup(self.sleep_patcher.stop)
+        utils._last_request_time = 0.0
+
+    def _mock_response(self, entries):
+        feed = MagicMock()
+        feed.entries = entries
+        response = MagicMock()
+        response.status_code = 200
+        response.content = b""
+        return response, feed
+
+    @patch('news.utils.feedparser.parse')
+    @patch('news.utils.requests.get')
+    def test_single_request_covers_all_pages(self, mock_get, mock_parse):
+        response, feed = self._mock_response([])
+        mock_get.return_value = response
+        mock_parse.return_value = feed
+
+        page_configs = [
+            {'filter': ['hep-ph', 'hep-th'], 'limit': 10},
+            {'filter': 'hep-ph', 'limit': 20},
+            {'filter': 'hep-th', 'limit': 20},
+            {'filter': 'hep-lat', 'limit': 20},
+            {'filter': 'gr-qc', 'limit': 20},
+            {'filter': 'astro-ph', 'limit': 20},
+        ]
+        utils.fetch_and_partition_papers(page_configs)
+
+        # Exactly one arXiv request for every page, not one per page.
+        self.assertEqual(mock_get.call_count, 1)
+        called_url = mock_get.call_args.args[0]
+        for cat in utils.ALLOWED_CATEGORIES:
+            self.assertIn(f"cat%3A{cat}", called_url)
+
+    @patch('news.utils.feedparser.parse')
+    @patch('news.utils.requests.get')
+    def test_partitions_shared_pool_by_page_filter_and_respects_limit(self, mock_get, mock_parse):
+        now = datetime.now(timezone.utc)
+        entries = [
+            _make_entry('hep-ph', now, "1"),
+            _make_entry('hep-ph', now - timedelta(minutes=1), "2"),
+            _make_entry('hep-th', now - timedelta(minutes=2), "3"),
+            _make_entry('gr-qc', now - timedelta(minutes=3), "4"),
+        ]
+        response, feed = self._mock_response(entries)
+        mock_get.return_value = response
+        mock_parse.return_value = feed
+
+        page_configs = [
+            {'filter': ['hep-ph', 'hep-th'], 'limit': 10},
+            {'filter': 'hep-ph', 'limit': 1},  # limit smaller than matches available
+            {'filter': 'gr-qc', 'limit': 20},
+        ]
+        front, hep_ph, gr_qc = utils.fetch_and_partition_papers(page_configs)
+
+        self.assertEqual({p['primary_category'] for p in front}, {'hep-ph', 'hep-th'})
+        self.assertEqual(len(hep_ph), 1)
+        self.assertEqual(hep_ph[0]['primary_category'], 'hep-ph')
+        self.assertEqual([p['primary_category'] for p in gr_qc], ['gr-qc'])
+
+    @patch('news.utils.feedparser.parse')
+    @patch('news.utils.requests.get')
+    def test_falls_back_to_allowlist_when_no_page_has_a_filter(self, mock_get, mock_parse):
+        response, feed = self._mock_response([])
+        mock_get.return_value = response
+        mock_parse.return_value = feed
+
+        utils.fetch_and_partition_papers([{'filter': None, 'limit': 10}])
+
+        called_url = mock_get.call_args.args[0]
+        for cat in utils.ALLOWED_CATEGORIES:
+            self.assertIn(f"cat%3A{cat}", called_url)
