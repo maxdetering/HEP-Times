@@ -5,7 +5,6 @@ Fetches ArXiv papers for each section and renders them to HTML files in dist/.
 import os
 import sys
 import shutil
-import time
 from pathlib import Path
 
 # Set up Django
@@ -18,7 +17,7 @@ from django.template.loader import render_to_string
 from django.test import RequestFactory
 from datetime import datetime
 
-from news.utils import fetch_arxiv_papers
+from news.utils import fetch_and_partition_papers
 
 PAGE_MAPPING = {
     1: {'name': 'Front Page',              'query': 'cat:hep-ph OR cat:hep-th', 'limit': 10, 'filter': ['hep-ph', 'hep-th']},
@@ -35,16 +34,8 @@ PAGE_LINKS = sorted(PAGE_MAPPING.keys())
 def page_url(page_num):
     return '/' if page_num == 1 else f'/page/{page_num}/'
 
-def build_page(page_num, page_config, today):
-    print(f"  Fetching page {page_num}: {page_config['name']} ...", flush=True)
-
-    papers = fetch_arxiv_papers(
-        query=page_config['query'],
-        max_results=page_config['limit'],
-        primary_category_filter=page_config['filter'],
-    )
-
-    print(f"  -> {len(papers)} papers", flush=True)
+def build_page(page_num, page_config, today, papers):
+    print(f"  Rendering page {page_num}: {page_config['name']} ({len(papers)} papers)", flush=True)
 
     headline_paper = None
     other_papers = []
@@ -95,11 +86,13 @@ def main():
     today = datetime.now()
     pages = sorted(PAGE_MAPPING.items())
 
-    for i, (page_num, page_config) in enumerate(pages):
-        build_page(page_num, page_config, today)
-        # Respect ArXiv rate limit between pages — each is a different query so we wait.
-        if i < len(pages) - 1:
-            time.sleep(10)
+    # One combined arXiv request covers every page's category, instead of
+    # one request per page — the build always renders all pages anyway.
+    print("  Fetching combined batch for all pages...", flush=True)
+    partitioned = fetch_and_partition_papers([cfg for _, cfg in pages])
+
+    for (page_num, page_config), papers in zip(pages, partitioned):
+        build_page(page_num, page_config, today, papers)
 
     print("=== Build complete ===", flush=True)
 
