@@ -31,8 +31,24 @@ PAGE_MAPPING = {
 DIST = Path('dist')
 PAGE_LINKS = sorted(PAGE_MAPPING.keys())
 
+def _default_base_path():
+    # GitHub Actions sets GITHUB_REPOSITORY to "owner/repo" automatically.
+    # A "<owner>.github.io" repo is served at the domain root; any other
+    # repo is served under a GitHub Pages project-site subpath, e.g.
+    # https://<owner>.github.io/<repo>/ — so links/assets need that prefix.
+    repo = os.environ.get('GITHUB_REPOSITORY')
+    if not repo or '/' not in repo:
+        return ''
+    owner, _, name = repo.partition('/')
+    if name.lower() == f"{owner.lower()}.github.io":
+        return ''
+    return f"/{name}"
+
+# Overridable for local testing or a custom domain (which would want '').
+BASE_PATH = os.environ.get('SITE_BASE_PATH', _default_base_path())
+
 def page_url(page_num):
-    return '/' if page_num == 1 else f'/page/{page_num}/'
+    return f"{BASE_PATH}/" if page_num == 1 else f"{BASE_PATH}/page/{page_num}/"
 
 def build_page(page_num, page_config, today, papers):
     print(f"  Rendering page {page_num}: {page_config['name']} ({len(papers)} papers)", flush=True)
@@ -55,6 +71,7 @@ def build_page(page_num, page_config, today, papers):
         'page_links': PAGE_LINKS,
         'page_mapping': PAGE_MAPPING,
         'page_url': page_url,   # passed for the static template
+        'base_path': BASE_PATH,
     }
 
     html = render_to_string('news/index_static.html', context)

@@ -7,8 +7,8 @@
     <link rel="preconnect" href="https://fonts.googleapis.com">
     <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
     <link href="https://fonts.googleapis.com/css2?family=Playfair+Display:ital,wght@0,400;0,700;0,900;1,400&family=UnifrakturMaguntia&display=swap" rel="stylesheet">
-    <link rel="stylesheet" href="/static/news/style.css">
-    <link rel="stylesheet" href="/static/news/pagination.css">
+    <link rel="stylesheet" href="{{ base_path }}/static/news/style.css">
+    <link rel="stylesheet" href="{{ base_path }}/static/news/pagination.css">
 
     <script>
         window.MathJax = {
@@ -77,9 +77,9 @@
                     {% if p == current_page %}
                         <span class="current-page">{{ p }}</span>
                     {% elif p == 1 %}
-                        <a href="/">{{ p }}</a>
+                        <a href="{{ base_path }}/">{{ p }}</a>
                     {% else %}
-                        <a href="/page/{{ p }}/">{{ p }}</a>
+                        <a href="{{ base_path }}/page/{{ p }}/">{{ p }}</a>
                     {% endif %}
                 {% endfor %}
             </div>
