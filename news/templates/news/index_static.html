@@ -50,7 +50,7 @@
                 <h2 class="headline-title">{{ headline_paper.title|safe }}</h2>
                 <div class="headline-meta">By {{ headline_paper.authors_str }}</div>
                 <div class="headline-abstract">
-                    <p><b>{{ headline_paper.published|date:"M d, Y" }}</b> — {{ headline_paper.abstract|safe|truncatewords:150 }}</p>
+                    <p><b>{{ headline_paper.published|date:"M d, Y" }}</b> — {{ headline_paper.abstract|safe }}</p>
                 </div>
                 <br>
                 <a href="{{ headline_paper.pdf_link }}" target="_blank" class="read-more">Read Full Paper (PDF)</a>
@@ -65,7 +65,7 @@
                     <span class="category-tag">{{ paper.primary_category }}</span>
                     <h3 class="paper-title">{{ paper.title|safe }}</h3>
                     <div class="paper-authors">By {{ paper.authors|slice:":3"|join:", " }}{% if paper.authors|length > 3 %}, et al.{% endif %}</div>
-                    <p class="paper-abstract">{{ paper.abstract|safe|truncatewords:50 }}</p>
+                    <p class="paper-abstract">{{ paper.abstract|safe }}</p>
                     <a href="{{ paper.link }}" target="_blank" style="color: black; text-decoration: underline;">ArXiv Link</a> |
                     <a href="{{ paper.pdf_link }}" target="_blank" style="color: #8b0000; font-weight: bold;">PDF</a>
                 </article>
